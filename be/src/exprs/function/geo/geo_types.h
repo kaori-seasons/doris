@@ -19,6 +19,7 @@
 
 #include <stddef.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -80,15 +81,23 @@ public:
 
     virtual std::string to_string() const { return ""; }
     static std::string as_binary(GeoShape* rhs);
+    static std::string as_ewkb(GeoShape* rhs);
 
     static bool ComputeArea(GeoShape* rhs, double* angle, std::string square_unit);
 
     virtual int num_geometries() const { return 1; }
     virtual int num_points() const { return -1; }
 
+    virtual int coordinate_dimension() const;
+    GeoCoordinateType coordinate_type() const { return _coordinate_type; }
+    bool has_z() const;
+    bool has_m() const;
+
 protected:
-    virtual void encode(std::string* buf) = 0;
-    virtual bool decode(const void* data, size_t size) = 0;
+    virtual void encode(std::string* buf, uint8_t version) = 0;
+    virtual bool decode(const void* data, size_t size, uint8_t version) = 0;
+
+    GeoCoordinateType _coordinate_type = GeoCoordinateType::XY;
 };
 
 class GeoPoint : public GeoShape {
@@ -107,7 +116,7 @@ public:
     bool disjoint(const GeoShape* rhs) const override;
     bool touches(const GeoShape* rhs) const override;
 
-    GeoShapeType type() const override { return GEO_SHAPE_POINT; }
+    GeoShapeType type() const override { return GeoShapeType::GEO_SHAPE_POINT; }
 
     const S2Point* point() const { return _point.get(); }
 
@@ -129,16 +138,19 @@ public:
 
     double x() const;
     double y() const;
+    double z() const { return _coordinate.z; }
+    double m() const { return _coordinate.m; }
 
     int num_geometries() const override { return 1; }
     int num_points() const override { return 1; }
 
 protected:
-    void encode(std::string* buf) override;
-    bool decode(const void* data, size_t size) override;
+    void encode(std::string* buf, uint8_t version) override;
+    bool decode(const void* data, size_t size, uint8_t version) override;
 
 private:
     std::unique_ptr<S2Point> _point;
+    GeoCoordinate _coordinate;
 };
 
 class GeoLine : public GeoShape {
@@ -156,7 +168,7 @@ public:
     bool disjoint(const GeoShape* rhs) const override;
     bool touches(const GeoShape* rhs) const override;
 
-    GeoShapeType type() const override { return GEO_SHAPE_LINE_STRING; }
+    GeoShapeType type() const override { return GeoShapeType::GEO_SHAPE_LINE_STRING; }
     const S2Polyline* polyline() const { return _polyline.get(); }
 
     std::string GeometryType() const override { return "ST_LINESTRING"; }
@@ -173,11 +185,12 @@ public:
     int num_points() const override { return numPoint(); }
 
 protected:
-    void encode(std::string* buf) override;
-    bool decode(const void* data, size_t size) override;
+    void encode(std::string* buf, uint8_t version) override;
+    bool decode(const void* data, size_t size, uint8_t version) override;
 
 private:
     std::unique_ptr<S2Polyline> _polyline;
+    GeoCoordinateList _coordinates;
 };
 
 class GeoPolygon : public GeoShape {
@@ -191,7 +204,7 @@ public:
     GeoParseStatus from_coords(const GeoCoordinateListList& list);
     std::unique_ptr<GeoCoordinateListList> to_coords() const;
 
-    GeoShapeType type() const override { return GEO_SHAPE_POLYGON; }
+    GeoShapeType type() const override { return GeoShapeType::GEO_SHAPE_POLYGON; }
     const S2Polygon* polygon() const { return _polygon.get(); }
 
     bool intersects(const GeoShape* rhs) const override;
@@ -214,11 +227,12 @@ public:
     int num_points() const override;
 
 protected:
-    void encode(std::string* buf) override;
-    bool decode(const void* data, size_t size) override;
+    void encode(std::string* buf, uint8_t version) override;
+    bool decode(const void* data, size_t size, uint8_t version) override;
 
 private:
     std::unique_ptr<S2Polygon> _polygon;
+    GeoCoordinateListList _coordinates;
 };
 
 class GeoMultiPolygon : public GeoShape {
@@ -232,7 +246,7 @@ public:
     GeoParseStatus from_coords(const std::vector<GeoCoordinateListList>& list);
     std::vector<std::unique_ptr<GeoCoordinateListList>> to_coords() const;
 
-    GeoShapeType type() const override { return GEO_SHAPE_MULTI_POLYGON; }
+    GeoShapeType type() const override { return GeoShapeType::GEO_SHAPE_MULTI_POLYGON; }
     const std::vector<std::unique_ptr<GeoPolygon>>& polygons() const { return _polygons; }
 
     bool intersects(const GeoShape* rhs) const override;
@@ -250,8 +264,8 @@ public:
     int num_points() const override;
 
 protected:
-    void encode(std::string* buf) override;
-    bool decode(const void* data, size_t size) override;
+    void encode(std::string* buf, uint8_t version) override;
+    bool decode(const void* data, size_t size, uint8_t version) override;
 
 private:
     std::vector<std::unique_ptr<GeoPolygon>> _polygons;
@@ -266,7 +280,7 @@ public:
 
     GeoParseStatus init(double lng, double lat, double radius);
 
-    GeoShapeType type() const override { return GEO_SHAPE_CIRCLE; }
+    GeoShapeType type() const override { return GeoShapeType::GEO_SHAPE_CIRCLE; }
 
     const S2Cap* circle() const { return _cap.get(); }
 
@@ -282,8 +296,8 @@ public:
     double Distance(const GeoShape* rhs) const override;
 
 protected:
-    void encode(std::string* buf) override;
-    bool decode(const void* data, size_t size) override;
+    void encode(std::string* buf, uint8_t version) override;
+    bool decode(const void* data, size_t size, uint8_t version) override;
 
 private:
     std::unique_ptr<S2Cap> _cap;

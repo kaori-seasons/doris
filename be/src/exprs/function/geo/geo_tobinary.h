@@ -19,42 +19,50 @@
 
 //#include "geo_types.h"
 
+#include <cstdint>
 #include <string>
 
 struct ToBinaryContext;
 
 namespace doris {
 
+enum class wkbType : int;
+
 class GeoShape;
 class GeoPoint;
 class GeoLine;
 class GeoPolygon;
+class GeoMultiPolygon;
 struct GeoCoordinate;
 struct GeoCoordinateList;
 
 class toBinary {
 public:
     static bool geo_tobinary(GeoShape* shape, std::string* result);
-
-    static bool write(GeoShape* shape, ToBinaryContext* ctx);
+    static bool geo_toewkb(GeoShape* shape, std::string* result);
 
 private:
+    static bool encode(GeoShape* shape, bool ewkb, std::string* result);
+    static bool write(GeoShape* shape, ToBinaryContext* ctx);
+
     static bool writeGeoPoint(GeoPoint* point, ToBinaryContext* ctx);
 
     static bool writeGeoLine(GeoLine* line, ToBinaryContext* ctx);
 
     static bool writeGeoPolygon(GeoPolygon* polygon, ToBinaryContext* ctx);
 
+    static bool writeGeoMultiPolygon(GeoMultiPolygon* multi_polygon, ToBinaryContext* ctx);
+
     static void writeByteOrder(ToBinaryContext* ctx);
 
-    static void writeGeometryType(int geometryType, ToBinaryContext* ctx);
+    static void writeGeometryType(wkbType geometryType, GeoShape* shape, ToBinaryContext* ctx);
 
-    static void writeInt(int intValue, ToBinaryContext* ctx);
+    static void writeInt(uint32_t value, ToBinaryContext* ctx);
 
     static void writeCoordinateList(const GeoCoordinateList& coords, bool sized,
                                     ToBinaryContext* ctx);
 
-    static void writeCoordinate(GeoCoordinate& coords, ToBinaryContext* ctx);
+    static void writeCoordinate(const GeoCoordinate& coordinate, ToBinaryContext* ctx);
 };
 
 } // namespace doris

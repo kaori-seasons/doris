@@ -31,6 +31,7 @@ import org.apache.doris.nereids.trees.expressions.functions.ai.AISimilarity;
 import org.apache.doris.nereids.trees.expressions.functions.ai.AISummarize;
 import org.apache.doris.nereids.trees.expressions.functions.ai.AITranslate;
 import org.apache.doris.nereids.trees.expressions.functions.ai.Embed;
+import org.apache.doris.nereids.trees.expressions.functions.combinator.FinalizeCombinator;
 import org.apache.doris.nereids.trees.expressions.functions.combinator.StateCombinator;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Abs;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Acos;
@@ -201,6 +202,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.DaysAdd;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DaysDiff;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DaysSub;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Dceil;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.Decode;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DecodeAsVarchar;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Degrees;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Dexp;
@@ -217,6 +219,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Dsqrt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.E;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ElementAt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Elt;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.Encode;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncodeAsBigInt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncodeAsInt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncodeAsLargeInt;
@@ -249,6 +252,9 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Gcd;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.GetFormat;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.GetVariantType;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Greatest;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.H3CellToBoundary;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.H3CellToLatLng;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.H3LatLngToCell;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.HammingDistance;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Hex;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.HllCardinality;
@@ -505,6 +511,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StAngleSphere
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAreaSquareKm;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAreaSquareMeters;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAsBinary;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StAsEwkb;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAstext;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAswkt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAzimuth;
@@ -524,6 +531,8 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StIsClosed;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StLength;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StLinefromtext;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StLinestringfromtext;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StM;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StNDims;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StNumGeometries;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StNumPoints;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StPoint;
@@ -534,6 +543,8 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StTouches;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StWithin;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StX;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StY;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StZ;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StZmFlag;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StartsWith;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StrToDate;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StrToMap;
@@ -1095,6 +1106,10 @@ public interface ScalarFunctionVisitor<R, C> {
         return visitScalarFunction(cutToFirstSignificantSubdomain, context);
     }
 
+    default R visitEncode(Encode encode, C context) {
+        return visitScalarFunction(encode, context);
+    }
+
     default R visitEncodeAsSmallInt(EncodeAsSmallInt encode, C context) {
         return visitScalarFunction(encode, context);
     }
@@ -1298,6 +1313,10 @@ public interface ScalarFunctionVisitor<R, C> {
 
     default R visitDigitalMasking(DigitalMasking digitalMasking, C context) {
         return visitScalarFunction(digitalMasking, context);
+    }
+
+    default R visitDecode(Decode decode, C context) {
+        return visitScalarFunction(decode, context);
     }
 
     default R visitDecodeAsVarchar(DecodeAsVarchar decode, C context) {
@@ -2508,6 +2527,18 @@ public interface ScalarFunctionVisitor<R, C> {
         return visitScalarFunction(stPoint, context);
     }
 
+    default R visitH3CellToBoundary(H3CellToBoundary function, C context) {
+        return visitScalarFunction(function, context);
+    }
+
+    default R visitH3CellToLatLng(H3CellToLatLng function, C context) {
+        return visitScalarFunction(function, context);
+    }
+
+    default R visitH3LatLngToCell(H3LatLngToCell function, C context) {
+        return visitScalarFunction(function, context);
+    }
+
     default R visitStPolyfromtext(StPolyfromtext stPolyfromtext, C context) {
         return visitScalarFunction(stPolyfromtext, context);
     }
@@ -2528,6 +2559,22 @@ public interface ScalarFunctionVisitor<R, C> {
         return visitScalarFunction(stY, context);
     }
 
+    default R visitStZ(StZ stZ, C context) {
+        return visitScalarFunction(stZ, context);
+    }
+
+    default R visitStM(StM stM, C context) {
+        return visitScalarFunction(stM, context);
+    }
+
+    default R visitStNDims(StNDims stNDims, C context) {
+        return visitScalarFunction(stNDims, context);
+    }
+
+    default R visitStZmFlag(StZmFlag stZmFlag, C context) {
+        return visitScalarFunction(stZmFlag, context);
+    }
+
     default R visitStGeometryfromwkb(StGeometryFromWKB stGeometryfromwkb, C context) {
         return visitScalarFunction(stGeometryfromwkb, context);
     }
@@ -2538,6 +2585,10 @@ public interface ScalarFunctionVisitor<R, C> {
 
     default R visitStAsBinary(StAsBinary stAsBinary, C context) {
         return visitScalarFunction(stAsBinary, context);
+    }
+
+    default R visitStAsEwkb(StAsEwkb stAsEwkb, C context) {
+        return visitScalarFunction(stAsEwkb, context);
     }
 
     default R visitStartsWith(StartsWith startsWith, C context) {
@@ -2870,6 +2921,10 @@ public interface ScalarFunctionVisitor<R, C> {
 
     default R visitYearsDiff(YearsDiff yearsDiff, C context) {
         return visitScalarFunction(yearsDiff, context);
+    }
+
+    default R visitFinalizeCombinator(FinalizeCombinator combinator, C context) {
+        return visitScalarFunction(combinator, context);
     }
 
     default R visitStateCombinator(StateCombinator combinator, C context) {

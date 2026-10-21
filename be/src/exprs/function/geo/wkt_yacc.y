@@ -66,7 +66,7 @@ wkt_::parser::symbol_type wkt_lex(WktParseContext* ctx, yyscan_t scanner);
 
 namespace wkt_ {
     // For syntax errors(e.g., `POIN(1 2)`, `POINT(1, 2)`), parser::error() does nothing.
-    // The parse_wkt() function will set ctx.parse_status to GEO_PARSE_WKT_SYNTAX_ERROR.
+    // The parse_wkt() function will set ctx.parse_status to GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR.
     // For semantic errors (e.g., invalid coordinates), ctx.parse_status is set
     // in the grammar rules before calling YYABORT.
     void parser::error(const std::string& msg) {}
@@ -86,6 +86,7 @@ namespace wkt_ {
 /* keyword for */
 %token KW_POINT KW_LINESTRING KW_POLYGON
 %token KW_MULTI_POINT KW_MULTI_LINESTRING KW_MULTI_POLYGON
+%token KW_Z KW_M KW_ZM KW_EMPTY INVALID_TOKEN
 
 %token <double> NUMERIC
 
@@ -95,6 +96,7 @@ namespace wkt_ {
 %type <std::unique_ptr<doris::GeoCoordinateList>> coordinate_list
 %type <std::unique_ptr<doris::GeoCoordinateListList>> coordinate_list_list
 %type <std::unique_ptr<std::vector<doris::GeoCoordinateListList>>> multi_polygon_list
+%type <doris::GeoCoordinateType> dimension_modifier
 
 %%
 
@@ -110,61 +112,97 @@ shape:
     ;
 
 point:
-     KW_POINT '(' coordinate ')'
+     KW_POINT dimension_modifier '(' coordinate ')'
      {
+        std::unique_ptr<doris::GeoCoordinate> coord = std::move($4);
+        if (!coord->can_apply_declared_type($2)) {
+            ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+            YYABORT;
+        }
+        coord->apply_declared_type($2);
         std::unique_ptr<doris::GeoPoint> point = doris::GeoPoint::create_unique();
-        const doris::GeoCoordinate& coord = *$3;
-        ctx->parse_status = point->from_coord(coord);
-        if (ctx->parse_status != doris::GEO_PARSE_OK) {
+        ctx->parse_status = point->from_coord(*coord);
+        if (ctx->parse_status != doris::GeoParseStatus::GEO_PARSE_OK) {
             YYABORT;
         }
         std::unique_ptr<doris::GeoShape> shape = std::move(point);
         yylhs.value.emplace<std::unique_ptr<doris::GeoShape>>(std::move(shape));
      }
+     | KW_POINT dimension_modifier KW_EMPTY
+     {
+        ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+        YYABORT;
+     }
      ;
 
 linestring:
-    KW_LINESTRING '(' coordinate_list ')'
+    KW_LINESTRING dimension_modifier '(' coordinate_list ')'
     {
-        // to avoid memory leak
-        std::unique_ptr<doris::GeoCoordinateList> list = std::move($3);
+        std::unique_ptr<doris::GeoCoordinateList> list = std::move($4);
+        if (!list->apply_declared_type($2)) {
+            ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+            YYABORT;
+        }
         std::unique_ptr<doris::GeoLine> line = doris::GeoLine::create_unique();
         ctx->parse_status = line->from_coords(*list);
-        if (ctx->parse_status != doris::GEO_PARSE_OK) {
+        if (ctx->parse_status != doris::GeoParseStatus::GEO_PARSE_OK) {
             YYABORT;
         }
         std::unique_ptr<doris::GeoShape> shape = std::move(line);
         yylhs.value.emplace<std::unique_ptr<doris::GeoShape>>(std::move(shape));
     }
+    | KW_LINESTRING dimension_modifier KW_EMPTY
+    {
+        ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+        YYABORT;
+    }
     ;
 
 polygon:
-    KW_POLYGON '(' coordinate_list_list ')'
+    KW_POLYGON dimension_modifier '(' coordinate_list_list ')'
     {
-        // to avoid memory leak
-        std::unique_ptr<doris::GeoCoordinateListList> list = std::move($3);
+        std::unique_ptr<doris::GeoCoordinateListList> list = std::move($4);
+        if (!list->apply_declared_type($2)) {
+            ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+            YYABORT;
+        }
         std::unique_ptr<doris::GeoPolygon> polygon = doris::GeoPolygon::create_unique();
         ctx->parse_status = polygon->from_coords(*list);
-        if (ctx->parse_status != doris::GEO_PARSE_OK) {
+        if (ctx->parse_status != doris::GeoParseStatus::GEO_PARSE_OK) {
             YYABORT;
         }
         std::unique_ptr<doris::GeoShape> shape = std::move(polygon);
         yylhs.value.emplace<std::unique_ptr<doris::GeoShape>>(std::move(shape));
     }
+    | KW_POLYGON dimension_modifier KW_EMPTY
+    {
+        ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+        YYABORT;
+    }
     ;
 
 multi_polygon:
-    KW_MULTI_POLYGON '(' multi_polygon_list ')'
+    KW_MULTI_POLYGON dimension_modifier '(' multi_polygon_list ')'
     {
-        // to avoid memory leak
-        std::unique_ptr<std::vector<doris::GeoCoordinateListList>> list = std::move($3);
+        std::unique_ptr<std::vector<doris::GeoCoordinateListList>> list = std::move($4);
+        for (auto& polygon : *list) {
+            if (!polygon.apply_declared_type($2)) {
+                ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+                YYABORT;
+            }
+        }
         std::unique_ptr<doris::GeoMultiPolygon> multi_polygon = doris::GeoMultiPolygon::create_unique();
         ctx->parse_status = multi_polygon->from_coords(*list);
-        if (ctx->parse_status != doris::GEO_PARSE_OK) {
+        if (ctx->parse_status != doris::GeoParseStatus::GEO_PARSE_OK) {
             YYABORT;
         }
         std::unique_ptr<doris::GeoShape> shape = std::move(multi_polygon);
         yylhs.value.emplace<std::unique_ptr<doris::GeoShape>>(std::move(shape));
+    }
+    | KW_MULTI_POLYGON dimension_modifier KW_EMPTY
+    {
+        ctx->parse_status = doris::GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR;
+        YYABORT;
     }
     ;
 
@@ -219,6 +257,17 @@ coordinate_list:
     }
     ;
 
+dimension_modifier:
+    %empty
+    { yylhs.value.emplace<doris::GeoCoordinateType>(doris::GeoCoordinateType::UNKNOWN); }
+    | KW_Z
+    { yylhs.value.emplace<doris::GeoCoordinateType>(doris::GeoCoordinateType::XYZ); }
+    | KW_M
+    { yylhs.value.emplace<doris::GeoCoordinateType>(doris::GeoCoordinateType::XYM); }
+    | KW_ZM
+    { yylhs.value.emplace<doris::GeoCoordinateType>(doris::GeoCoordinateType::XYZM); }
+    ;
+
 coordinate:
     NUMERIC NUMERIC
     {
@@ -227,5 +276,23 @@ coordinate:
         coord->y = $2;
         yylhs.value.emplace<std::unique_ptr<doris::GeoCoordinate>>(std::move(coord));
     }
+    | NUMERIC NUMERIC NUMERIC
+    {
+        auto coord = std::make_unique<doris::GeoCoordinate>();
+        coord->x = $1;
+        coord->y = $2;
+        coord->z = $3;
+        coord->type = doris::GeoCoordinateType::XYZ;
+        yylhs.value.emplace<std::unique_ptr<doris::GeoCoordinate>>(std::move(coord));
+    }
+    | NUMERIC NUMERIC NUMERIC NUMERIC
+    {
+        auto coord = std::make_unique<doris::GeoCoordinate>();
+        coord->x = $1;
+        coord->y = $2;
+        coord->z = $3;
+        coord->m = $4;
+        coord->type = doris::GeoCoordinateType::XYZM;
+        yylhs.value.emplace<std::unique_ptr<doris::GeoCoordinate>>(std::move(coord));
+    }
     ;
-

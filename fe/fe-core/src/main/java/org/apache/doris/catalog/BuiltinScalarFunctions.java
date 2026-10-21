@@ -184,6 +184,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.DaysAdd;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DaysDiff;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DaysSub;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Dceil;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.Decode;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DecodeAsVarchar;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DeduplicateMap;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Degrees;
@@ -201,6 +202,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Dsqrt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.E;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ElementAt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Elt;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.Encode;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncodeAsBigInt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncodeAsInt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncodeAsLargeInt;
@@ -237,6 +239,9 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.GetVariantTyp
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Greatest;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Grouping;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.GroupingId;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.H3CellToBoundary;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.H3CellToLatLng;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.H3LatLngToCell;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.HammingDistance;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Hex;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.HllCardinality;
@@ -487,6 +492,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StAngleSphere
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAreaSquareKm;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAreaSquareMeters;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAsBinary;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StAsEwkb;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAstext;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAswkt;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StAzimuth;
@@ -506,6 +512,8 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StIsClosed;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StLength;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StLinefromtext;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StLinestringfromtext;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StM;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StNDims;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StNumGeometries;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StNumPoints;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StPoint;
@@ -516,6 +524,8 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StTouches;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StWithin;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StX;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StY;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StZ;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.StZmFlag;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StartsWith;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StrToDate;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StrToMap;
@@ -788,6 +798,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(DaysDiff.class, "days_diff"),
             scalar(DaysSub.class, "days_sub", "date_sub", "subdate"),
             scalar(Dceil.class, "dceil"),
+            scalar(Decode.class, "decode"),
             scalar(DecodeAsVarchar.class, "decode_as_varchar"),
             scalar(DeduplicateMap.class, "deduplicate_map"),
             scalar(Degrees.class, "degrees"),
@@ -807,6 +818,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(ElementAt.class, "element_at", "struct_element"),
             scalar(Elt.class, "elt"),
             scalar(Embed.class, "embed"),
+            scalar(Encode.class, "encode"),
             scalar(EncodeAsSmallInt.class, "encode_as_smallint"),
             scalar(EncodeAsInt.class, "encode_as_int"),
             scalar(EncodeAsBigInt.class, "encode_as_bigint"),
@@ -1098,6 +1110,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(SplitPart.class, "split_part"),
             scalar(Sqrt.class, "sqrt"),
             scalar(StAsBinary.class, "st_asbinary"),
+            scalar(StAsEwkb.class, "st_asewkb"),
             scalar(StAstext.class, "st_astext"),
             scalar(StAswkt.class, "st_aswkt"),
             scalar(StCircle.class, "st_circle"),
@@ -1109,6 +1122,8 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(StLength.class, "st_length"),
             scalar(StGeometryType.class, "st_geometrytype"),
             scalar(StIsClosed.class, "st_isclosed"),
+            scalar(StM.class, "st_m"),
+            scalar(StNDims.class, "st_ndims"),
             scalar(StNumGeometries.class, "st_numgeometries"),
             scalar(StGeometries.class, "st_geometries"),
             scalar(StNumPoints.class, "st_numpoints", "st_npoints"),
@@ -1126,11 +1141,16 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(StLinefromtext.class, "st_linefromtext"),
             scalar(StLinestringfromtext.class, "st_linestringfromtext"),
             scalar(StPoint.class, "st_point"),
+            scalar(H3CellToBoundary.class, "h3_cell_to_boundary"),
+            scalar(H3CellToLatLng.class, "h3_cell_to_lat_lng"),
+            scalar(H3LatLngToCell.class, "h3_lat_lng_to_cell"),
             scalar(StPolyfromtext.class, "st_polyfromtext"),
             scalar(StPolygon.class, "st_polygon"),
             scalar(StPolygonfromtext.class, "st_polygonfromtext"),
             scalar(StX.class, "st_x"),
             scalar(StY.class, "st_y"),
+            scalar(StZ.class, "st_z"),
+            scalar(StZmFlag.class, "st_zmflag"),
             scalar(StartsWith.class, "starts_with"),
             scalar(Strcmp.class, "strcmp"),
             scalar(StripNullValue.class, "strip_null_value"),

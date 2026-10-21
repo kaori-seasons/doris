@@ -22,6 +22,8 @@
 #include <string.h>
 
 #include <ostream>
+#include <string>
+#include <vector>
 
 #include "common/logging.h"
 #include "gtest/gtest_pred_impl.h"
@@ -38,11 +40,13 @@ TEST_F(GeoTypesTest, point_normal) {
     {
         GeoPoint point;
         auto status = point.from_coord(116.123, 63.546);
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_STREQ("POINT (116.123 63.546)", point.as_wkt().c_str());
 
         std::string buf;
         point.encode_to(&buf);
+        ASSERT_GE(buf.size(), 2);
+        EXPECT_EQ(0, static_cast<uint8_t>(buf[0]));
         {
             auto point2 = GeoShape::from_encoded(buf.data(), buf.size());
             EXPECT_STREQ("POINT (116.123 63.546)", point2->as_wkt().c_str());
@@ -60,7 +64,7 @@ TEST_F(GeoTypesTest, point_normal) {
         coord.x = 116.123;
         coord.y = 63.546;
         auto status = point.from_coord(coord);
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_STREQ("POINT (116.123 63.546)", point.as_wkt().c_str());
     }
 }
@@ -69,7 +73,105 @@ TEST_F(GeoTypesTest, point_invalid) {
     GeoPoint point;
 
     auto status = point.from_coord(200, 88);
-    EXPECT_NE(GEO_PARSE_OK, status);
+    EXPECT_NE(GeoParseStatus::GEO_PARSE_OK, status);
+}
+
+TEST_F(GeoTypesTest, dimensional_encoding_round_trip) {
+    const std::vector<std::string> wkts = {
+            "POINT Z (1 2 3)",
+            "LINESTRING M (0 0 1, 1 1 2)",
+            "POLYGON ZM ((0 0 1 2, 0 1 2 3, 1 1 3 4, 1 0 4 5, 0 0 1 2))",
+            "MULTIPOLYGON Z (((0 0 1, 0 1 2, 1 1 3, 1 0 4, 0 0 1)))",
+    };
+
+    for (const auto& wkt : wkts) {
+        GeoParseStatus status;
+        auto shape = GeoShape::from_wkt(wkt.data(), wkt.size(), status);
+        ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status) << wkt;
+        ASSERT_NE(nullptr, shape) << wkt;
+
+        std::string encoded;
+        shape->encode_to(&encoded);
+        ASSERT_GE(encoded.size(), 2);
+        EXPECT_EQ(1, static_cast<uint8_t>(encoded[0])) << wkt;
+
+        auto decoded = GeoShape::from_encoded(encoded.data(), encoded.size());
+        ASSERT_NE(nullptr, decoded) << wkt;
+        EXPECT_EQ(shape->type(), decoded->type()) << wkt;
+        EXPECT_EQ(shape->coordinate_type(), decoded->coordinate_type()) << wkt;
+        EXPECT_EQ(shape->coordinate_dimension(), decoded->coordinate_dimension()) << wkt;
+        EXPECT_EQ(wkt, decoded->as_wkt()) << wkt;
+
+        std::string reencoded;
+        decoded->encode_to(&reencoded);
+        EXPECT_EQ(encoded, reencoded) << wkt;
+
+        encoded.resize(encoded.size() - 1);
+        EXPECT_EQ(nullptr, GeoShape::from_encoded(encoded.data(), encoded.size())) << wkt;
+    }
+}
+
+TEST_F(GeoTypesTest, dimensional_binary_output_round_trip) {
+    const std::string point_z_wkt = "POINT Z (1 2 3)";
+    GeoParseStatus status;
+    auto point_z = GeoShape::from_wkt(point_z_wkt.data(), point_z_wkt.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, point_z);
+
+    EXPECT_EQ("\\x0101000000000000000000f03f0000000000000040", GeoShape::as_binary(point_z.get()));
+    const std::string point_z_ewkb =
+            "\\x0101000080000000000000f03f00000000000000400000000000000840";
+    EXPECT_EQ(point_z_ewkb, GeoShape::as_ewkb(point_z.get()));
+
+    auto decoded = GeoShape::from_wkb(point_z_ewkb.data(), point_z_ewkb.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, decoded);
+    EXPECT_EQ(point_z_wkt, decoded->as_wkt());
+
+    const std::string multi_polygon_zm_wkt =
+            "MULTIPOLYGON ZM (((0 0 1 2, 0 1 2 3, 1 1 3 4, 1 0 4 5, 0 0 1 2)))";
+    auto multi_polygon =
+            GeoShape::from_wkt(multi_polygon_zm_wkt.data(), multi_polygon_zm_wkt.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, multi_polygon);
+    const auto multi_polygon_ewkb = GeoShape::as_ewkb(multi_polygon.get());
+    auto decoded_multi_polygon =
+            GeoShape::from_wkb(multi_polygon_ewkb.data(), multi_polygon_ewkb.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, decoded_multi_polygon);
+    EXPECT_EQ(multi_polygon_zm_wkt, decoded_multi_polygon->as_wkt());
+}
+
+TEST_F(GeoTypesTest, dimensional_point_preserves_xy_ordinates) {
+    const std::string wkt = "POINT Z (1.123456789012345 2.123456789012345 3)";
+    GeoParseStatus status;
+    auto shape = GeoShape::from_wkt(wkt.data(), wkt.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, shape);
+    const auto* point = static_cast<const GeoPoint*>(shape.get());
+    EXPECT_DOUBLE_EQ(1.123456789012345, point->x());
+    EXPECT_DOUBLE_EQ(2.123456789012345, point->y());
+}
+
+TEST_F(GeoTypesTest, dimensional_predicates_ignore_z) {
+    GeoParseStatus status;
+    const std::string polygon_wkt = "POLYGON Z ((0 0 10, 0 10 20, 10 10 30, 10 0 40, 0 0 10))";
+    auto polygon = GeoShape::from_wkt(polygon_wkt.data(), polygon_wkt.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, polygon);
+
+    const std::string point_2d_wkt = "POINT (5 5)";
+    auto point_2d = GeoShape::from_wkt(point_2d_wkt.data(), point_2d_wkt.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, point_2d);
+
+    const std::string point_3d_wkt = "POINT Z (5 5 9999)";
+    auto point_3d = GeoShape::from_wkt(point_3d_wkt.data(), point_3d_wkt.size(), status);
+    ASSERT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
+    ASSERT_NE(nullptr, point_3d);
+
+    EXPECT_EQ(polygon->contains(point_2d.get()), polygon->contains(point_3d.get()));
+    EXPECT_EQ(polygon->intersects(point_2d.get()), polygon->intersects(point_3d.get()));
 }
 
 TEST_F(GeoTypesTest, linestring) {
@@ -77,7 +179,7 @@ TEST_F(GeoTypesTest, linestring) {
     GeoParseStatus status;
     auto line = GeoShape::from_wkt(wkt, strlen(wkt), status);
     EXPECT_NE(nullptr, line.get());
-    EXPECT_EQ(GEO_SHAPE_LINE_STRING, line->type());
+    EXPECT_EQ(GeoShapeType::GEO_SHAPE_LINE_STRING, line->type());
 
     EXPECT_STREQ(wkt, line->as_wkt().c_str());
 
@@ -162,7 +264,7 @@ TEST_F(GeoTypesTest, point_intersects) {
     {
         auto shape = GeoShape::from_encoded(buf.data(), buf.size());
         ASSERT_NE(nullptr, shape.get());
-        EXPECT_EQ(GEO_SHAPE_POLYGON, shape->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_POLYGON, shape->type());
     }
     {
         buf.resize(buf.size() - 1);
@@ -290,7 +392,7 @@ TEST_F(GeoTypesTest, linestring_intersects) {
     {
         auto decoded(GeoShape::from_encoded(buf.data(), buf.size()));
         ASSERT_NE(nullptr, decoded.get());
-        EXPECT_EQ(GEO_SHAPE_LINE_STRING, decoded->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_LINE_STRING, decoded->type());
     }
     {
         buf.resize(buf.size() - 2);
@@ -466,7 +568,7 @@ TEST_F(GeoTypesTest, polygon_intersects) {
     {
         auto decoded = GeoShape::from_encoded(buf.data(), buf.size());
         ASSERT_NE(nullptr, decoded.get());
-        EXPECT_EQ(GEO_SHAPE_POLYGON, decoded->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_POLYGON, decoded->type());
     }
     {
         buf.resize(buf.size() - 2);
@@ -616,7 +718,7 @@ TEST_F(GeoTypesTest, multipolygon_intersects) {
     {
         auto decoded = GeoShape::from_encoded(buf.data(), buf.size());
         ASSERT_NE(nullptr, decoded.get());
-        EXPECT_EQ(GEO_SHAPE_MULTI_POLYGON, decoded->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_MULTI_POLYGON, decoded->type());
 
         GeoPoint point;
         point.from_coord(20, 5);
@@ -634,7 +736,7 @@ TEST_F(GeoTypesTest, circle_intersect) {
 
     GeoCircle circle;
     auto res = circle.init(0, 0, 10);
-    EXPECT_EQ(GEO_PARSE_OK, res);
+    EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, res);
 
     // ======================
     // Circle vs Point
@@ -770,7 +872,7 @@ TEST_F(GeoTypesTest, point_touches) {
     {
         auto shape = GeoShape::from_encoded(buf.data(), buf.size());
         ASSERT_NE(nullptr, shape.get());
-        EXPECT_EQ(GEO_SHAPE_POLYGON, shape->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_POLYGON, shape->type());
     }
     {
         buf.resize(buf.size() - 1);
@@ -916,7 +1018,7 @@ TEST_F(GeoTypesTest, linestring_touches) {
     {
         auto decoded(GeoShape::from_encoded(buf.data(), buf.size()));
         ASSERT_NE(nullptr, decoded.get());
-        EXPECT_EQ(GEO_SHAPE_LINE_STRING, decoded->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_LINE_STRING, decoded->type());
     }
     {
         buf.resize(buf.size() - 2);
@@ -1092,7 +1194,7 @@ TEST_F(GeoTypesTest, polygon_touches) {
     {
         auto decoded = GeoShape::from_encoded(buf.data(), buf.size());
         ASSERT_NE(nullptr, decoded.get());
-        EXPECT_EQ(GEO_SHAPE_POLYGON, decoded->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_POLYGON, decoded->type());
     }
     {
         buf.resize(buf.size() - 2);
@@ -1239,7 +1341,7 @@ TEST_F(GeoTypesTest, multipolygon_touches) {
     {
         auto decoded(GeoShape::from_encoded(buf.data(), buf.size()));
         ASSERT_NE(nullptr, decoded.get());
-        EXPECT_EQ(GEO_SHAPE_MULTI_POLYGON, decoded->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_MULTI_POLYGON, decoded->type());
 
         GeoPoint point;
         point.from_coord(10, 5);
@@ -1257,7 +1359,7 @@ TEST_F(GeoTypesTest, circle_touches) {
 
     GeoCircle circle;
     auto res = circle.init(0, 0, 10);
-    EXPECT_EQ(GEO_PARSE_OK, res);
+    EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, res);
 
     // ======================
     // Circle vs Point
@@ -1280,7 +1382,7 @@ TEST_F(GeoTypesTest, circle_touches) {
     {
         GeoCircle circle2;
         auto res = circle2.init(1, 1, 1);
-        EXPECT_EQ(GEO_PARSE_OK, res);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, res);
         GeoPoint point;
         point.from_coord(2, 1);
         EXPECT_TRUE(circle2.touches(&point));
@@ -1394,7 +1496,7 @@ TEST_F(GeoTypesTest, test_geometry_type) {
     {
         GeoCircle circle;
         auto res = circle.init(110.123, 64, 1000);
-        EXPECT_EQ(GEO_PARSE_OK, res);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, res);
         EXPECT_STREQ("ST_CIRCLE", circle.GeometryType().c_str());
     }
 }
@@ -1463,7 +1565,7 @@ TEST_F(GeoTypesTest, test_length) {
     {
         GeoCircle circle;
         auto res = circle.init(0, 0, 1000); // 1000 meters radius
-        EXPECT_EQ(GEO_PARSE_OK, res);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, res);
         double circumference = circle.Length();
         EXPECT_GT(circumference, 0.0);
         // Expected circumference: 2 * pi * 1000 ≈ 6283 meters
@@ -1914,7 +2016,7 @@ TEST_F(GeoTypesTest, polygon_contains) {
 
     {
         auto shape(GeoShape::from_encoded(buf.data(), buf.size()));
-        EXPECT_EQ(GEO_SHAPE_POLYGON, shape->type());
+        EXPECT_EQ(GeoShapeType::GEO_SHAPE_POLYGON, shape->type());
         LOG(INFO) << "polygon=" << shape->as_wkt();
     }
 
@@ -1930,21 +2032,21 @@ TEST_F(GeoTypesTest, polygon_parse_fail) {
         const char* wkt = "POLYGON ((10 10, 50 10, 50 50, 10 50), (10 10 01))";
         GeoParseStatus status;
         auto polygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_WKT_SYNTAX_ERROR, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR, status);
         EXPECT_EQ(nullptr, polygon.get());
     }
     {
         const char* wkt = "POLYGON ((10 10, 50 10, 50 50, 10 50))";
         GeoParseStatus status;
         auto polygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_LOOP_NOT_CLOSED, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_LOOP_NOT_CLOSED, status);
         EXPECT_EQ(nullptr, polygon.get());
     }
     {
         const char* wkt = "POLYGON ((10 10, 50 10, 10 10))";
         GeoParseStatus status;
         auto polygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_LOOP_LACK_VERTICES, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_LOOP_LACK_VERTICES, status);
         EXPECT_EQ(nullptr, polygon.get());
     }
 }
@@ -1955,7 +2057,7 @@ TEST_F(GeoTypesTest, polygon_hole_contains) {
             "20))";
     GeoParseStatus status;
     auto polygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-    EXPECT_EQ(GEO_PARSE_OK, status);
+    EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
     EXPECT_NE(nullptr, polygon);
 
     {
@@ -2006,7 +2108,7 @@ TEST_F(GeoTypesTest, within) {
                 "POLYGON ((10 10, 50 10, 50 50, 10 50, 10 10), (20 20, 40 20, 40 40, 20 40, 20 "
                 "20))";
         auto polygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_NE(nullptr, polygon.get());
 
         GeoPoint point;
@@ -2070,7 +2172,7 @@ TEST_F(GeoTypesTest, within) {
 
         const char* wkt = "LINESTRING (2 5, 8 5)";
         auto line(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(line->within(polygon.get()));
     }
     {
@@ -2082,22 +2184,22 @@ TEST_F(GeoTypesTest, within) {
 
         const char* wkt_line = "LINESTRING(2 2, 8 2)";
         auto line(GeoShape::from_wkt(wkt_line, strlen(wkt_line), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(line->within(multipolygon.get()));
 
         wkt_line = "LINESTRING(16 6, 19 9)";
         auto line2(GeoShape::from_wkt(wkt_line, strlen(wkt_line), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(line2->within(multipolygon.get()));
 
         wkt_line = "LINESTRING(5 5, 16 7)";
         auto line3(GeoShape::from_wkt(wkt_line, strlen(wkt_line), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(line3->within(multipolygon.get()));
 
         wkt_line = "LINESTRING(0 0, 0 10)";
         auto line4(GeoShape::from_wkt(wkt_line, strlen(wkt_line), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(line4->within(multipolygon.get()));
     }
 
@@ -2112,17 +2214,17 @@ TEST_F(GeoTypesTest, within) {
 
         const char* wkt = "POLYGON ((3 3, 7 3, 7 7, 3 7, 3 3))";
         auto inner(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(inner->within(outer.get()));
 
         wkt = "POLYGON ((5 5, 15 5, 15 15, 5 15, 5 5))";
         auto overlapping(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(overlapping->within(outer.get()));
 
         wkt = "POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20))";
         auto separate(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(separate->within(outer.get()));
     }
     {
@@ -2134,17 +2236,17 @@ TEST_F(GeoTypesTest, within) {
 
         const char* wkt_inner = "POLYGON((1 1, 1 9, 9 9, 9 1, 1 1))";
         auto inner(GeoShape::from_wkt(wkt_inner, strlen(wkt_inner), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(inner->within(multipolygon.get()));
 
         wkt_inner = "POLYGON((16 6, 16 9, 19 9, 19 6, 16 6))";
         auto inner2(GeoShape::from_wkt(wkt_inner, strlen(wkt_inner), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(inner2->within(multipolygon.get()));
 
         wkt_inner = "POLYGON((5 5, 5 15, 15 15, 15 5, 5 5))";
         auto inner3(GeoShape::from_wkt(wkt_inner, strlen(wkt_inner), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(inner3->within(multipolygon.get()));
     }
 
@@ -2159,12 +2261,12 @@ TEST_F(GeoTypesTest, within) {
 
         const char* wkt = "MULTIPOLYGON(((2 2, 4 2, 4 4, 2 4, 2 2)), ((6 6, 8 6, 8 8, 6 8, 6 6)))";
         auto inner(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(inner->within(outer.get()));
 
         wkt = "MULTIPOLYGON(((2 2, 4 2, 4 4, 2 4, 2 2)), ((15 15, 25 15, 25 25, 15 25, 15 15)))";
         auto partial(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(partial->within(outer.get()));
     }
     {
@@ -2177,17 +2279,17 @@ TEST_F(GeoTypesTest, within) {
         const char* wkt =
                 "MULTIPOLYGON(((1 1, 1 9, 9 9, 9 1, 1 1)), ((16 6, 16 9, 19 9, 19 6, 16 6)))";
         auto inner(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_TRUE(inner->within(outer.get()));
 
         wkt = "MULTIPOLYGON(((1 1, 1 5, 5 5, 5 1, 1 1)), ((12 6, 12 9, 14 9, 14 6, 12 6)))";
         auto inner2(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(inner2->within(outer.get()));
 
         wkt = "MULTIPOLYGON(((1 1, 1 4, 4 4, 4 1, 1 1)), ((5 5, 5 11, 12 11, 12 5, 5 5)))";
         auto inner3(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_OK, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, status);
         EXPECT_FALSE(inner3->within(outer.get()));
     }
 }
@@ -2197,21 +2299,21 @@ TEST_F(GeoTypesTest, multipolygon_parse_fail) {
         const char* wkt = "MULTIPOLYGON (((10 10, 50 10, 50 50, 10 50), (10 10 01)))";
         GeoParseStatus status;
         auto multipolygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_WKT_SYNTAX_ERROR, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR, status);
         EXPECT_EQ(nullptr, multipolygon.get());
     }
     {
         const char* wkt = "MULTIPOLYGON (((10 10, 50 10, 50 50, 10 50)))";
         GeoParseStatus status;
         auto multipolygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_LOOP_NOT_CLOSED, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_LOOP_NOT_CLOSED, status);
         EXPECT_EQ(nullptr, multipolygon.get());
     }
     {
         const char* wkt = "MULTIPOLYGON (((10 10, 50 10, 10 10)))";
         GeoParseStatus status;
         auto multipolygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_LOOP_LACK_VERTICES, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_LOOP_LACK_VERTICES, status);
         EXPECT_EQ(nullptr, multipolygon.get());
     }
     {
@@ -2221,7 +2323,7 @@ TEST_F(GeoTypesTest, multipolygon_parse_fail) {
                 "5)))";
         GeoParseStatus status;
         auto multipolygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_MULTIPOLYGON_OVERLAP, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_MULTIPOLYGON_OVERLAP, status);
         EXPECT_EQ(nullptr, multipolygon.get());
     }
     {
@@ -2230,14 +2332,14 @@ TEST_F(GeoTypesTest, multipolygon_parse_fail) {
                 "6)))";
         GeoParseStatus status;
         auto multipolygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_MULTIPOLYGON_OVERLAP, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_MULTIPOLYGON_OVERLAP, status);
         EXPECT_EQ(nullptr, multipolygon.get());
     }
     {
         const char* wkt = "MULTIPOLYGON((()))";
         GeoParseStatus status;
         auto multipolygon(GeoShape::from_wkt(wkt, strlen(wkt), status));
-        EXPECT_EQ(GEO_PARSE_WKT_SYNTAX_ERROR, status);
+        EXPECT_EQ(GeoParseStatus::GEO_PARSE_WKT_SYNTAX_ERROR, status);
         EXPECT_EQ(nullptr, multipolygon.get());
     }
 }
@@ -2245,7 +2347,7 @@ TEST_F(GeoTypesTest, multipolygon_parse_fail) {
 TEST_F(GeoTypesTest, circle) {
     GeoCircle circle;
     auto res = circle.init(110.123, 64, 1000);
-    EXPECT_EQ(GEO_PARSE_OK, res);
+    EXPECT_EQ(GeoParseStatus::GEO_PARSE_OK, res);
 
     std::string buf;
     circle.encode_to(&buf);
